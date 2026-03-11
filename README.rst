@@ -1,73 +1,164 @@
-xlwings - Make Excel fly with Python!
-=====================================
+# 🐍 xlwings — Python dans Excel, sans VBA
 
-xlwings (Open Source)
----------------------
+VBA existe depuis 1993. Il fait le travail — mais il est verbeux, difficile à déboguer,
+impossible à tester unitairement, et coupé de tout l'écosystème Python moderne.
 
-xlwings is a `BSD-licensed <http://opensource.org/licenses/BSD-3-Clause>`_ Python library that makes it easy to call Python from Excel and vice versa:
+Ce repo documente mon utilisation de **xlwings** pour remplacer des macros VBA
+par du Python propre, et exposer des fonctions Python directement dans les cellules Excel
+comme si c'étaient des fonctions natives.
 
-* **Scripting**: Automate/interact with Excel from Python using a syntax that is close to VBA.
-* **Macros**: Replace your messy VBA macros with clean and powerful Python code.
-* **UDFs**: Write User Defined Functions (UDFs) in Python (Windows only).
+---
 
-**Numpy arrays** and **Pandas Series/DataFrames** are fully supported. xlwings-powered workbooks are easy to distribute and work
-on **Windows** and **macOS**.
+## Ce que xlwings permet concrètement
 
-xlwings includes all files in the xlwings package except the ``pro`` folder, i.e., the ``xlwings.pro`` subpackage.
+```
+  ┌──────────────────────────────────────────────────────────┐
+  │                    Fichier Excel                         │
+  │                                                          │
+  │  Cellule A1: =square(B1)    ← fonction Python UDF       │
+  │  Cellule A2: =forecast(C1:C12)  ← pandas sous le capot  │
+  │                                                          │
+  │  [Bouton "Générer Rapport"]  ← déclenche script Python  │
+  │                                                          │
+  └──────────────────────────────────────────────────────────┘
+         │                              │
+         │ UDF call                     │ Macro call
+         ▼                              ▼
+  ┌─────────────────────┐    ┌─────────────────────────────┐
+  │   functions.py      │    │      report.py              │
+  │                     │    │                             │
+  │  @xw.func           │    │  def generate_report():     │
+  │  def square(x):     │    │    wb = xw.Book.caller()    │
+  │      return x ** 2  │    │    sheet = wb.sheets[0]     │
+  │                     │    │    df = get_data()          │
+  │  @xw.func           │    │    sheet.range('A1').value  │
+  │  @xw.arg('data',    │    │      = df                  │
+  │    pd.DataFrame)    │    │    add_chart(sheet, df)     │
+  │  def forecast(data):│    │                             │
+  │    return model(data│    └─────────────────────────────┘
+  │                     │
+  └─────────────────────┘
+```
 
-xlwings Lite
-------------
+---
 
-`xlwings Lite <https://lite.xlwings.org>`_ is the easiest way to get started with xlwings. Simply install xlwings Lite from Excel's `add-in store <https://appsource.microsoft.com/en-us/product/office/WA200008175>`_ and build something amazing!
+## Cas d'usage 1 : UDF Python dans Excel
 
-* No local Python installation required
-* Works on Windows, macOS, and Excel on the web (incl. the free version of Excel)
-* Custom Functions
-* Access to the Excel object model
-* Python code is stored inside the workbook
-* Free for personal and commercial use
+Écrire une fonction Python et l'appeler depuis une cellule Excel comme `=SOMME()`.
 
-xlwings PRO
------------
+```python
+import xlwings as xw
+import pandas as pd
+import numpy as np
 
-xlwings PRO offers additional functionality on top of xlwings (Open Source), including:
+@xw.func
+def square(x):
+    """Retourne le carré de x — utilisable en cellule: =square(A1)"""
+    return x ** 2
 
-* xlwings Server: No local Python installation required, supports Excel on the web and Google Sheets in addition to Excel on Windows and macOS. Integrates with VBA, Office Scripts and Office.js and supports custom functions on all platforms. See `GitHub repo <https://github.com/xlwings/xlwings-server>`_ and `xlwings Server docs <https://server.xlwings.org/>`_.
-* xlwings Reports: the flexible, template-based reporting system
-* xlwings Reader: A faster and more feature-rich alternative for ``pandas.read_excel()`` (no Excel installation required)
-* Easy deployment via 1-click installer and embedded code
-* See the `full list of PRO features <https://www.xlwings.org/pricing>`_
+@xw.func
+@xw.arg('data', pd.DataFrame, index=False, header=True)
+@xw.ret(index=False, header=True)
+def moving_average(data, window: int = 3):
+    """Moyenne mobile sur un plage Excel — =moving_average(A1:A20, 5)"""
+    return data.rolling(window=window).mean()
 
-xlwings PRO is `source available <https://en.wikipedia.org/wiki/Source-available_software>`_ and dual-licensed under one of the following licenses:
+@xw.func
+@xw.arg('prices', np.array)
+def volatility(prices):
+    """Volatilité annualisée — =volatility(B2:B252)"""
+    returns = np.diff(np.log(prices))
+    return np.std(returns) * np.sqrt(252)
+```
 
-* `PolyForm Noncommercial License 1.0.0 <https://polyformproject.org/licenses/noncommercial/1.0.0>`_ (noncommercial use is free)
-* `xlwings PRO License <https://github.com/xlwings/xlwings/blob/main/LICENSE_PRO.txt>`_ (commercial use requires a `paid plan <https://www.xlwings.org/pricing>`_)
+---
 
-**License Key**
+## Cas d'usage 2 : Automatisation complète d'un rapport
 
-To use xlwings PRO, you need to install a license key on a Terminal/Command Prompt like so (alternatively, set the env var ``XLWINGS_LICENSE_KEY``::
+Bouton Excel → script Python génère tout le rapport en quelques secondes.
 
-    xlwings license update -k YOUR_LICENSE_KEY
+```python
+import xlwings as xw
+import pandas as pd
+import matplotlib.pyplot as plt
 
-See `the docs <https://docs.xlwings.org/en/latest/pro/license_key.html>`_ for more details.
+def generate_monthly_report():
+    wb = xw.Book.caller()  # classeur qui a déclenché la macro
+    ws_data  = wb.sheets['Data']
+    ws_report = wb.sheets['Rapport']
 
-**License key for noncommercial purpose**:
+    # 1. Lire les données depuis la feuille Data
+    df = ws_data.range('A1').expand().options(pd.DataFrame).value
 
-* To use xlwings PRO for free in a noncommercial context, use the following license key: ``noncommercial``.
+    # 2. Calculer les KPIs
+    summary = df.groupby('Catégorie').agg(
+        Total=('Montant', 'sum'),
+        Moyenne=('Montant', 'mean'),
+        Count=('ID', 'count')
+    ).reset_index()
 
-**License key for commercial purpose**:
+    # 3. Écrire les résultats dans la feuille Rapport
+    ws_report.range('B2').value = summary
 
-* To try xlwings PRO for free in a commercial context, request a trial license key: https://www.xlwings.org/trial
-* To use xlwings PRO in a commercial context beyond the trial, you need to enroll in a paid plan (they include additional services like support and the ability to create one-click installers): https://www.xlwings.org/pricing
+    # 4. Créer un graphique matplotlib et l'insérer dans Excel
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.bar(summary['Catégorie'], summary['Total'], color='steelblue')
+    ax.set_title('Ventes par catégorie')
+    ws_report.pictures.add(fig, name='SalesChart',
+                           update=True,
+                           left=ws_report.range('B15').left,
+                           top=ws_report.range('B15').top)
 
-xlwings PRO licenses are developer licenses, are verified offline (i.e., no telemetry/license server involved) and allow royalty-free deployments to unlimited internal and external end-users and servers for a hassle-free management. Deployments use deploy keys that don't expire but instead are bound to a specific version of xlwings.
+    print("Rapport généré avec succès.")
+```
 
-Links
------
+---
 
-* Homepage: https://www.xlwings.org
-* Quickstart: https://docs.xlwings.org/en/stable/quickstart.html
-* Documentation: https://docs.xlwings.org
-* Book (O'Reilly, 2021): https://www.xlwings.org/book
-* Video Course: https://www.youtube.com/playlist?list=PL8T301Ai03xFcE5AFTnfSqnemXAh8cmMR
-* Source Code: https://github.com/xlwings/xlwings
+## Installation & setup
+
+```bash
+# 1. Installer xlwings
+pip install xlwings
+
+# 2. Installer l'add-in Excel
+xlwings addin install
+
+# 3. Démarrer un projet
+xlwings quickstart mon_projet
+# → crée mon_projet.xlsb + mon_projet.py liés automatiquement
+
+# 4. Importer les fonctions UDF
+# Dans Excel : onglet xlwings → Import Functions
+```
+
+---
+
+## Pourquoi Python > VBA pour ce cas
+
+```
+  VBA                          Python (xlwings)
+  ──────────────────           ─────────────────────────
+  Syntaxe des années 90        Syntaxe moderne et lisible
+  Pas de pandas / numpy        Accès à tout l'écosystème
+  Débogage dans l'IDE Excel    Débogage dans VS Code / PyCharm
+  Pas de tests unitaires       pytest sur toutes les fonctions
+  Pas de versioning propre     Git fonctionne normalement
+  Impossible à dockeriser      Scriptable en CI/CD
+```
+
+---
+
+## Ce que j'ai vraiment appris
+
+La subtilité la plus importante : xlwings utilise **COM** sur Windows (`pywin32`)
+pour communiquer avec Excel. Ça veut dire que Python et Excel tournent dans deux
+processus séparés — Excel appelle Python, attend la réponse, et affiche le résultat.
+
+En pratique : si une UDF plante en Python, Excel affiche `#VALUE!` sans détail.
+Le reflex est d'ajouter `try/except` dans chaque UDF et de logger l'erreur dans
+un fichier `.log` — sinon le débogage devient un cauchemar.
+
+---
+
+*Projet réalisé dans le cadre de ma formation ingénieur — ENSET Mohammedia*
+*Par **Abderrahmane Elouafi** · [LinkedIn](https://www.linkedin.com/in/abderrahmane-elouafi-43226736b/) · [Portfolio](https://my-first-porfolio-six.vercel.app/)*
